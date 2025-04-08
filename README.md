@@ -1,5 +1,7 @@
 # NotifyAOD
 
+<img src="https://github.com/bebras123/notifyaod/blob/main/docs/screenshot.png" width="300" height="800">
+
 **NotifyAOD** is an Android utility that automatically turns **Always-On Display (AOD)** on or off
 depending on incoming notifications.
 
