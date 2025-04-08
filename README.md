@@ -27,7 +27,7 @@ You decide which apps are considered important and whether to use **whitelist mo
 
 ### 1. **Install the App**
 
-Install the [notifyAOD.apk](https://github.com/bebras123/notifyaod/blob/main/notifyAOD.apk) on your device.
+Install the [notifyAOD.apk](https://github.com/bebras123/notifyaod/releases/download/v1.0/notifyAOD.apk) on your device.
 
 To make NotifyAOD work your device must meet these conditions:
 
