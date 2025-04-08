@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
@@ -32,13 +33,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.bebras123.notifyaod.ui.theme.NotifyAODTheme
 import androidx.core.content.edit
+import com.bebras123.notifyaod.ui.theme.NotifyAODTheme
 
 // Data model for each entry
 data class NotificationData(val packageName: String, val importance: Int)
 
-// Persistence functions remain the same
+// Persistence functions for notification data
 fun saveNotificationDataList(context: Context, dataList: List<NotificationData>) {
     val jsonArray = org.json.JSONArray().apply {
         dataList.forEach { data ->
@@ -49,7 +50,7 @@ fun saveNotificationDataList(context: Context, dataList: List<NotificationData>)
         }
     }
     context.getSharedPreferences("notificationData", Context.MODE_PRIVATE)
-        .edit() {
+        .edit {
             putString("data", jsonArray.toString())
         }
 }
@@ -67,6 +68,17 @@ fun loadNotificationDataList(context: Context): List<NotificationData> {
     }
 }
 
+// Persistence functions for packagelist AOD preference
+fun savePackageListWhitelist(context: Context, enabled: Boolean) {
+    context.getSharedPreferences("notificationData", Context.MODE_PRIVATE)
+        .edit { putBoolean("packagelist_whitelist", enabled) }
+}
+
+fun loadPackageListAODEnabled(context: Context): Boolean {
+    return context.getSharedPreferences("notificationData", Context.MODE_PRIVATE)
+        .getBoolean("packagelist_whitelist", false)
+}
+
 class MainActivity : ComponentActivity() {
 
     companion object {
@@ -78,6 +90,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
+
         // Check if notification listener is enabled
         if (isNotificationServiceEnabled()) {
             log("NotificationListenerService is ENABLED.")
@@ -98,6 +111,9 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     dataList.addAll(loadNotificationDataList(context))
                 }
+                // Load initial packagelist setting from SharedPreferences.
+                var packagelistWhitelist by remember { mutableStateOf(loadPackageListAODEnabled(context)) }
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Column(
                         modifier = Modifier
@@ -113,10 +129,19 @@ class MainActivity : ComponentActivity() {
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        // Data entry UI
-                        NotificationDataEntry(context = context, dataList = dataList)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        // Wrap the list in a Box with weight so it takes only available space and scrolls if needed
+                        // Data entry UI with integrated packagelist checkbox row.
+                        NotificationDataEntry(
+                            context = context,
+                            dataList = dataList,
+                            packagelistAODEnabled = packagelistWhitelist,
+                            onPackageListAODEnabledChange = { newValue ->
+                                packagelistWhitelist = newValue
+                                savePackageListWhitelist(context, newValue)
+                                PackageListCache.invalidate()
+                                log("Added packages are whitelist (enables AOD only for these): $newValue")
+                            }
+                        )
+                        // Wrap the list in a Box so it takes available space and scrolls if needed.
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -126,14 +151,13 @@ class MainActivity : ComponentActivity() {
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         PostNotificationButton()
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text("App Log:", style = MaterialTheme.typography.titleMedium)
                         LogViewer(logs = logMessages)
                     }
                 }
             }
         }
-
     }
 
     private fun createNotificationChannel() {
@@ -253,28 +277,34 @@ fun LogViewer(logs: List<String>) {
         }
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(200.dp)
-            .background(backgroundColor)
-            .padding(8.dp)
-    ) {
-        items(logs) { line ->
-            Text(text = line, color = textColor)
+    // Wrap the whole log view in a SelectionContainer to allow text copying.
+    SelectionContainer {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .background(backgroundColor)
+                .padding(8.dp)
+        ) {
+            items(logs) { line ->
+                Text(text = line, color = textColor)
+            }
         }
     }
 }
 
-
 @Composable
-fun NotificationDataEntry(context: Context, dataList: SnapshotStateList<NotificationData>) {
+fun NotificationDataEntry(
+    context: Context,
+    dataList: SnapshotStateList<NotificationData>,
+    packagelistAODEnabled: Boolean,
+    onPackageListAODEnabledChange: (Boolean) -> Unit
+) {
     val packageNameState = remember { mutableStateOf("") }
     val importanceState = remember { mutableStateOf("-1") }
 
     Column {
-        Text("Ignore notifications from:", style = MaterialTheme.typography.bodyLarge)
         Spacer(modifier = Modifier.height(4.dp))
         OutlinedTextField(
             value = packageNameState.value,
@@ -293,7 +323,10 @@ fun NotificationDataEntry(context: Context, dataList: SnapshotStateList<Notifica
             label = { Text("Notification Importance") },
             modifier = Modifier.fillMaxWidth()
         )
-        Text("All notifications: -1. For explicit notifications look for importance in log", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "All notifications: -1. For explicit notifications look for importance in log",
+            style = MaterialTheme.typography.bodySmall
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Button(
             onClick = {
@@ -305,12 +338,32 @@ fun NotificationDataEntry(context: Context, dataList: SnapshotStateList<Notifica
                     log("Data saved: Package=${packageNameState.value}, Importance=$importance")
                     packageNameState.value = ""
                     importanceState.value = "-1"
-                    WhitelistCache.invalidate()
+                    PackageListCache.invalidate()
                 }
             }
         ) {
             Text("+")
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = packagelistAODEnabled,
+                onCheckedChange = { newValue ->
+                    onPackageListAODEnabledChange(newValue)
+                }
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = if (packagelistAODEnabled)
+                    "Only notifications from this list enable AOD"
+                else
+                    "Notifications from this list are ignored",
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+
     }
 }
 
@@ -334,8 +387,7 @@ fun NotificationDataList(
                 )
             ) {
                 Row(
-                    modifier = Modifier
-                        .padding(16.dp),
+                    modifier = Modifier.padding(8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -354,7 +406,7 @@ fun NotificationDataList(
                             dataList.remove(item)
                             log("Removed: Package=${item.packageName}, Importance=${item.importance}")
                             saveNotificationDataList(context, dataList)
-                            WhitelistCache.invalidate()
+                            PackageListCache.invalidate()
                         },
                         colors = IconButtonDefaults.iconButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
@@ -367,6 +419,3 @@ fun NotificationDataList(
         }
     }
 }
-
-
-
